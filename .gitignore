@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+dist/
+src-tauri/target/
+.cargo-local/
+.cargo-target-*/
+.idea/
+.vscode/
+*.log
+*.db
+*.db-shm
+*.db-wal
+docs/
+design-system/
