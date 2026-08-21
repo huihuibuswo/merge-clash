@@ -21,9 +21,11 @@ pub fn run() {
             let db = tauri::async_runtime::block_on(database::Database::open(&db_path))
                 .map_err(|e| e.to_string())?;
             let http = fetcher::client().map_err(|e| e.to_string())?;
+            let mihomo_path = fetcher::mihomo_path(app).map_err(|e| e.to_string())?;
             app.manage(AppState {
                 db,
                 http,
+                mihomo_path,
                 publisher: Arc::new(Mutex::new(None)),
             });
             Ok(())

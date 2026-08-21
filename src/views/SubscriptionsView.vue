@@ -9,7 +9,7 @@ import PageHeader from "@/components/PageHeader.vue";
 import StatusLabel from "@/components/StatusLabel.vue";
 import { api } from "@/services/api";
 import { useAppStore } from "@/stores/app";
-import type { ConnectionTestResult, Subscription, SubscriptionInput } from "@/types";
+import type { AvailableProxyNode, ConnectionTestResult, Subscription, SubscriptionInput } from "@/types";
 
 const store = useAppStore();
 const message = useMessage();
@@ -18,8 +18,17 @@ const saving = ref(false);
 const testing = ref(false);
 const testingSubscriptionIds = ref<Set<string>>(new Set());
 const testResult = ref<ConnectionTestResult | null>(null);
+const savedTestResult = ref<ConnectionTestResult | null>(null);
+const savedTestName = ref("");
+const testDetailsVisible = ref(false);
 const form = reactive<SubscriptionInput>({ name: "", url: "", enabled: true });
 const editing = computed(() => Boolean(form.id));
+
+const availableNodeColumns: DataTableColumns<AvailableProxyNode> = [
+  { title: "可用节点", key: "name", minWidth: 260, ellipsis: { tooltip: true } },
+  { title: "协议", key: "type", width: 92, render: (row) => h(NTag, { size: "small", bordered: false }, { default: () => row.type }) },
+  { title: "延时", key: "elapsedMs", width: 88, align: "right", render: (row) => h("span", { class: "mono" }, `${row.elapsedMs}ms`) },
+];
 
 watch(() => form.url, () => {
   if (!testing.value) testResult.value = null;
@@ -73,7 +82,10 @@ async function testSavedSubscription(row: Subscription) {
   try {
     const result = await api.testSubscription(row.id);
     await store.reloadSubscriptions();
-    if (result.reachable) message.success(`${row.name}：连接成功，识别 ${result.proxyCount ?? 0} 个节点`);
+    savedTestResult.value = result;
+    savedTestName.value = row.name;
+    testDetailsVisible.value = true;
+    if (result.reachable) message.success(`${row.name}：${result.availableProxyCount} 个节点可用`);
     else message.error(`${row.name}：${result.error ?? "连接失败"}`);
   } finally {
     const next = new Set(testingSubscriptionIds.value);
@@ -116,7 +128,7 @@ async function refreshAll() {
       <div v-if="store.subscriptions.length === 0" class="empty-state"><link2 :size="32" /><span>还没有订阅源</span><n-button type="primary" @click="openCreate">添加第一个订阅</n-button></div>
     </section>
 
-    <n-modal v-model:show="modalVisible" preset="card" :title="editing ? '编辑订阅' : '添加订阅'" style="width:600px" :mask-closable="false">
+    <n-modal v-model:show="modalVisible" preset="card" :title="editing ? '编辑订阅' : '添加订阅'" style="width:min(680px, calc(100vw - 32px))" :mask-closable="false">
       <n-form label-placement="top" @submit.prevent="save">
         <n-form-item label="名称" required><n-input v-model:value="form.name" placeholder="例如：主订阅" /></n-form-item>
         <n-form-item :label="editing ? '新订阅 URL（留空保持原地址）' : '订阅 URL'" :required="!editing">
@@ -130,15 +142,25 @@ async function refreshAll() {
             <n-step title="URL" /><n-step title="网络" /><n-step title="HTTP" /><n-step title="YAML" /><n-step title="节点" />
           </n-steps>
           <div class="connection-test__result" aria-live="polite">
-            <template v-if="testing">正在请求并解析订阅，请稍候…</template>
+            <template v-if="testing">正在通过 Mihomo 发起真实代理请求，请稍候…</template>
             <template v-else-if="testResult">
-              <status-label :status="testResult.reachable ? 'success' : 'error'" :text="testResult.reachable ? `识别 ${testResult.proxyCount ?? 0} 个节点，耗时 ${testResult.elapsedMs}ms` : testResult.error ?? '连接失败'" />
+              <status-label :status="testResult.reachable ? 'success' : 'error'" :text="testResult.reachable ? `${testResult.availableProxyCount} / ${testResult.proxyCount ?? 0} 个节点可用，耗时 ${testResult.elapsedMs}ms` : testResult.error ?? '连接失败'" />
+              <n-data-table v-if="testResult.availableNodes.length" class="available-nodes" :columns="availableNodeColumns" :data="testResult.availableNodes" :row-key="(row: AvailableProxyNode) => row.index" :max-height="180" :virtual-scroll="testResult.availableNodes.length > 50" size="small" />
+              <div v-if="testResult.warnings.length" class="test-warnings"><span v-for="warning in testResult.warnings" :key="warning">{{ warning }}</span></div>
             </template>
-            <template v-else>测试结果会在保存订阅后同步到列表，不参与合并。</template>
+            <template v-else>测试成功要求至少一个节点完成真实代理请求。</template>
           </div>
         </div>
         <div class="modal-actions"><n-button @click="modalVisible = false">取消</n-button><n-button type="primary" attr-type="submit" :loading="saving">保存订阅</n-button></div>
       </n-form>
+    </n-modal>
+
+    <n-modal v-model:show="testDetailsVisible" preset="card" :title="`${savedTestName} · 节点测试`" style="width:min(680px, calc(100vw - 32px))">
+      <template v-if="savedTestResult">
+        <status-label :status="savedTestResult.reachable ? 'success' : 'error'" :text="savedTestResult.reachable ? `${savedTestResult.availableProxyCount} / ${savedTestResult.proxyCount ?? 0} 个节点可用，耗时 ${savedTestResult.elapsedMs}ms` : savedTestResult.error ?? '测试失败'" />
+        <n-data-table v-if="savedTestResult.availableNodes.length" class="available-nodes" :columns="availableNodeColumns" :data="savedTestResult.availableNodes" :row-key="(row: AvailableProxyNode) => row.index" :max-height="420" :virtual-scroll="savedTestResult.availableNodes.length > 50" size="small" />
+        <div v-if="savedTestResult.warnings.length" class="test-warnings"><span v-for="warning in savedTestResult.warnings" :key="warning">{{ warning }}</span></div>
+      </template>
     </n-modal>
   </main>
 </template>
@@ -148,5 +170,7 @@ async function refreshAll() {
 .connection-test { min-height: 126px; padding: 12px; border: 1px solid var(--mc-border); border-radius: 4px; background: var(--mc-surface-muted); }
 .connection-test__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .connection-test__result { min-height: 24px; margin-top: 12px; color: var(--mc-text-secondary); }
+.available-nodes { margin-top: 10px; }
+.test-warnings { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; color: var(--mc-warning); font-size: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 </style>

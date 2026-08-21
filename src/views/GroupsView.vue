@@ -70,7 +70,7 @@ function addGroup() {
   selectedGroupIndex.value = groups.value.length - 1;
 }
 function deleteGroup() {
-  if (!selectedGroup.value || selectedGroup.value.name === "节点选择") { message.warning("主选择组不能删除"); return; }
+  if (!selectedGroup.value || ["GLOBAL", "节点选择"].includes(selectedGroup.value.name)) { message.warning("系统代理组不能删除"); return; }
   groups.value.splice(selectedGroupIndex.value, 1);
   selectedGroupIndex.value = Math.max(0, selectedGroupIndex.value - 1);
 }

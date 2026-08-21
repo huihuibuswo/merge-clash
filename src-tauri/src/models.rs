@@ -62,6 +62,16 @@ pub struct SubscriptionInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AvailableProxyNode {
+    pub index: usize,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub proxy_type: String,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConnectionTestResult {
     pub reachable: bool,
     pub stage: String,
@@ -69,6 +79,8 @@ pub struct ConnectionTestResult {
     pub elapsed_ms: u64,
     pub response_bytes: Option<u64>,
     pub proxy_count: Option<usize>,
+    pub available_proxy_count: usize,
+    pub available_nodes: Vec<AvailableProxyNode>,
     pub proxy_types: Vec<String>,
     pub warnings: Vec<String>,
     pub error: Option<String>,

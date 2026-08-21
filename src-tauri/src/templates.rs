@@ -12,7 +12,12 @@ pub fn list() -> Vec<TemplateSummary> {
             file_name: "merge-clash.yaml".into(),
             supported_modes: vec!["proxy-providers".into(), "embedded-proxies".into()],
             default_mode: "proxy-providers".into(),
-            groups: vec!["节点选择".into(), "发达地区自动".into(), "美国自动".into()],
+            groups: vec![
+                "GLOBAL".into(),
+                "节点选择".into(),
+                "发达地区自动".into(),
+                "美国自动".into(),
+            ],
             external_dependencies: vec!["MetaCubeX 中国大陆域名规则集".into()],
         },
         TemplateSummary {
@@ -83,11 +88,49 @@ pub fn groups(template_id: &str) -> Vec<ProxyGroup> {
     }
     let auto = "发达地区自动";
     let groups = vec![
+        ProxyGroup { name: "GLOBAL".into(), group_type: "select".into(), members: vec![], filter: None, exclude_filter: None, url: None, interval: None, tolerance: None, lazy: None },
         ProxyGroup { name: "节点选择".into(), group_type: "select".into(), members: vec![auto.into(), "美国自动".into(), "DIRECT".into()], filter: None, exclude_filter: None, url: None, interval: None, tolerance: None, lazy: None },
-        ProxyGroup { name: auto.into(), group_type: "url-test".into(), members: vec![], filter: Some(developed_filter()), exclude_filter: Some(notice_filter()), url: Some("https://www.gstatic.com/generate_204".into()), interval: Some(300), tolerance: Some(50), lazy: Some(true) },
+        ProxyGroup { name: auto.into(), group_type: "url-test".into(), members: vec![], filter: Some(developed_filter()), exclude_filter: Some(notice_filter()), url: Some("https://www.gstatic.com/generate_204".into()), interval: Some(300), tolerance: Some(65535), lazy: Some(true) },
         ProxyGroup { name: "美国自动".into(), group_type: "url-test".into(), members: vec![], filter: Some("(?i)(美国|美國|美西|美东|美東|美中|美南|\\bus\\b|\\busa\\b|united states|america|los angeles|san jose|seattle|new york|dallas|chicago|washington)".into()), exclude_filter: Some(notice_filter()), url: Some("https://www.gstatic.com/generate_204".into()), interval: Some(300), tolerance: Some(50), lazy: Some(true) },
     ];
     groups
+}
+
+pub fn upgrade_groups(groups: &mut Vec<ProxyGroup>) {
+    if let Some(global) = groups.iter_mut().find(|group| group.name == "GLOBAL") {
+        global.group_type = "select".into();
+        global.members.clear();
+        global.filter = None;
+        global.exclude_filter = None;
+        global.url = None;
+        global.interval = None;
+        global.tolerance = None;
+        global.lazy = None;
+    } else {
+        groups.insert(
+            0,
+            ProxyGroup {
+                name: "GLOBAL".into(),
+                group_type: "select".into(),
+                members: vec![],
+                filter: None,
+                exclude_filter: None,
+                url: None,
+                interval: None,
+                tolerance: None,
+                lazy: None,
+            },
+        );
+    }
+
+    if let Some(auto) = groups
+        .iter_mut()
+        .find(|group| group.name == "发达地区自动" && group.group_type == "url-test")
+    {
+        if auto.tolerance.is_none() || auto.tolerance == Some(50) {
+            auto.tolerance = Some(65535);
+        }
+    }
 }
 
 fn developed_filter() -> String {

@@ -111,6 +111,7 @@ pub fn build(
         .map(|draft| draft.draft.groups.clone())
         .unwrap_or_else(|| templates::groups(&settings.template_id));
     if settings.template_id == "clash-mihomo" {
+        templates::upgrade_groups(&mut groups);
         populate_groups(&mut groups, &stored_proxies, &settings.merge_mode);
         issues.extend(validate_groups(
             &groups,
@@ -149,6 +150,9 @@ pub fn rerender(
     stored: &mut StoredDraft,
     subscriptions: &[InternalSubscription],
 ) -> AppResult<()> {
+    if settings.template_id == "clash-mihomo" {
+        templates::upgrade_groups(&mut stored.draft.groups);
+    }
     sanitize_provider_group_members(&mut stored.draft.groups, &settings.merge_mode);
     stored.draft.issues.retain(|issue| {
         matches!(
@@ -391,6 +395,9 @@ fn render_yaml(
     put(&mut root, "mode", "rule");
     put(&mut root, "log-level", "info");
     put(&mut root, "ipv6", false);
+    let mut profile = Mapping::new();
+    put(&mut profile, "store-selected", true);
+    root.insert(key("profile"), Value::Mapping(profile));
     let mut dns = Mapping::new();
     put(&mut dns, "enable", true);
     put(&mut dns, "ipv6", false);
@@ -718,6 +725,11 @@ fn group_yaml(
     let mut map = Mapping::new();
     put(&mut map, "name", group.name.as_str());
     put(&mut map, "type", group.group_type.as_str());
+    if group.name == "GLOBAL" {
+        put(&mut map, "include-all", true);
+        put(&mut map, "exclude-type", "Direct");
+        return Value::Mapping(map);
+    }
     if merge_mode == "proxy-providers" {
         map.insert(
             key("use"),
@@ -873,6 +885,79 @@ mod tests {
         let mapping = rendered.as_mapping().expect("group should be a mapping");
         assert!(mapping.contains_key(key("use")));
         assert!(!mapping.contains_key(key("proxies")));
+    }
+
+    #[test]
+    fn upgrades_legacy_groups_for_global_and_sticky_auto_selection() {
+        let mut groups = vec![
+            ProxyGroup {
+                name: "节点选择".into(),
+                group_type: "select".into(),
+                members: vec!["发达地区自动".into(), "DIRECT".into()],
+                filter: None,
+                exclude_filter: None,
+                url: None,
+                interval: None,
+                tolerance: None,
+                lazy: None,
+            },
+            ProxyGroup {
+                name: "发达地区自动".into(),
+                group_type: "url-test".into(),
+                members: vec![],
+                filter: Some("日本".into()),
+                exclude_filter: None,
+                url: Some("https://www.gstatic.com/generate_204".into()),
+                interval: Some(300),
+                tolerance: Some(50),
+                lazy: Some(true),
+            },
+        ];
+
+        templates::upgrade_groups(&mut groups);
+
+        assert_eq!(groups[0].name, "GLOBAL");
+        assert!(groups[0].members.is_empty());
+        assert_eq!(groups[2].tolerance, Some(65535));
+    }
+
+    #[test]
+    fn rendered_yaml_customizes_global_without_direct_and_stores_selection() {
+        let settings = ProjectSettings {
+            template_id: "clash-mihomo".into(),
+            template_version: 1,
+            merge_mode: "embedded-proxies".into(),
+            theme: "system".into(),
+        };
+        let groups = templates::groups("clash-mihomo");
+        let yaml = render_yaml(&settings, &[], &[], &groups).unwrap();
+        let root: Value = serde_yaml::from_str(&yaml).unwrap();
+        let mapping = root.as_mapping().unwrap();
+        let profile = mapping.get(key("profile")).unwrap().as_mapping().unwrap();
+        assert_eq!(
+            profile.get(key("store-selected")).and_then(Value::as_bool),
+            Some(true)
+        );
+        let rendered_groups = mapping
+            .get(key("proxy-groups"))
+            .unwrap()
+            .as_sequence()
+            .unwrap();
+        let global = rendered_groups[0].as_mapping().unwrap();
+        assert_eq!(
+            global.get(key("name")).and_then(Value::as_str),
+            Some("GLOBAL")
+        );
+        assert_eq!(
+            global.get(key("include-all")).and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            global.get(key("exclude-type")).and_then(Value::as_str),
+            Some("Direct")
+        );
+        assert!(!global.contains_key(key("proxies")));
+        assert!(!global.contains_key(key("use")));
     }
 
     #[test]

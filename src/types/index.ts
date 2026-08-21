@@ -49,6 +49,13 @@ export interface SubscriptionInput {
 
 export type TestStage = "url" | "network" | "http" | "yaml" | "nodes" | "complete";
 
+export interface AvailableProxyNode {
+  index: number;
+  name: string;
+  type: string;
+  elapsedMs: number;
+}
+
 export interface ConnectionTestResult {
   reachable: boolean;
   stage: TestStage;
@@ -56,6 +63,8 @@ export interface ConnectionTestResult {
   elapsedMs: number;
   responseBytes?: number | null;
   proxyCount?: number | null;
+  availableProxyCount: number;
+  availableNodes: AvailableProxyNode[];
   proxyTypes: string[];
   warnings: string[];
   error?: string | null;

@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 pub struct AppState {
     pub db: Database,
     pub http: reqwest::Client,
+    pub mihomo_path: std::path::PathBuf,
     pub publisher: Arc<Mutex<Option<ServerHandle>>>,
 }
 
@@ -77,7 +78,7 @@ pub async fn save_subscription(
                 &saved.id,
                 if result.reachable { "success" } else { "error" },
                 result.error.as_deref(),
-                result.proxy_count.unwrap_or(0) as i64,
+                result.available_proxy_count as i64,
                 result.elapsed_ms as i64,
                 result.reachable,
             )
@@ -106,7 +107,7 @@ pub async fn test_subscription_url(
 ) -> AppResult<ConnectionTestResult> {
     let candidate = url.unwrap_or_default();
     if !candidate.trim().is_empty() {
-        return Ok(fetcher::test_url(&state.http, candidate.trim()).await);
+        return Ok(fetcher::test_url(&state.http, &state.mihomo_path, candidate.trim()).await);
     }
     let id = id.ok_or_else(|| AppError::InvalidInput("请输入订阅地址".into()))?;
     let subscription = state
@@ -116,7 +117,7 @@ pub async fn test_subscription_url(
         .into_iter()
         .find(|item| item.safe.id == id)
         .ok_or_else(|| AppError::InvalidInput("订阅不存在或已删除".into()))?;
-    Ok(fetcher::test_url(&state.http, &subscription.url).await)
+    Ok(fetcher::test_url(&state.http, &state.mihomo_path, &subscription.url).await)
 }
 
 #[tauri::command]
@@ -131,14 +132,14 @@ pub async fn test_subscription(
         .into_iter()
         .find(|item| item.safe.id == id)
         .ok_or_else(|| AppError::InvalidInput("订阅不存在或已删除".into()))?;
-    let result = fetcher::test_url(&state.http, &subscription.url).await;
+    let result = fetcher::test_url(&state.http, &state.mihomo_path, &subscription.url).await;
     state
         .db
         .mark_fetch(
             &subscription.safe.id,
             if result.reachable { "success" } else { "error" },
             result.error.as_deref(),
-            result.proxy_count.unwrap_or(0) as i64,
+            result.available_proxy_count as i64,
             result.elapsed_ms as i64,
             result.reachable,
         )
@@ -156,8 +157,10 @@ pub async fn refresh_subscriptions(state: State<'_, AppState>) -> AppResult<Refr
     let mut successes = Vec::new();
     let mut failures = Vec::new();
     for subscription in enabled {
-        match fetcher::fetch_config(&state.http, &subscription.url).await {
-            Ok(fetched) => {
+        match fetcher::fetch_tested_config(&state.http, &state.mihomo_path, &subscription.url).await
+        {
+            Ok(tested) if !tested.available_nodes.is_empty() => {
+                let fetched = tested.fetched;
                 state
                     .db
                     .mark_fetch(
@@ -182,6 +185,24 @@ pub async fn refresh_subscriptions(state: State<'_, AppState>) -> AppResult<Refr
                     subscription,
                     fetched,
                 });
+            }
+            Ok(tested) => {
+                let safe_error = format!(
+                    "识别到 {} 个节点，但没有节点通过真实代理请求测试",
+                    tested.total_proxy_count
+                );
+                state
+                    .db
+                    .mark_fetch(
+                        &subscription.safe.id,
+                        "error",
+                        Some(&safe_error),
+                        0,
+                        tested.fetched.elapsed_ms as i64,
+                        false,
+                    )
+                    .await?;
+                failures.push(format!("{}：{}", subscription.safe.name, safe_error));
             }
             Err(error) => {
                 let safe_error = error.to_string();

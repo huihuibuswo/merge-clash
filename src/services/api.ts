@@ -44,7 +44,7 @@ const templates: TemplateSummary[] = [
     fileName: "merge-clash.yaml",
     supportedModes: ["proxy-providers", "embedded-proxies"],
     defaultMode: "proxy-providers",
-    groups: ["节点选择", "发达地区自动", "美国自动"],
+    groups: ["GLOBAL", "节点选择", "发达地区自动", "美国自动"],
     externalDependencies: ["MetaCubeX 中国大陆域名规则集"],
   },
   {
@@ -92,6 +92,7 @@ function baseGroups(templateId: string): ProxyGroup[] {
   if (templateId !== "clash-mihomo") return [];
   const autoName = "发达地区自动";
   const groups: ProxyGroup[] = [
+    { name: "GLOBAL", groupType: "select", members: [] },
     { name: "节点选择", groupType: "select", members: [autoName, "美国自动", "DIRECT"] },
     {
       name: autoName,
@@ -101,7 +102,7 @@ function baseGroups(templateId: string): ProxyGroup[] {
       excludeFilter: "(?i)(剩余|流量|套餐|到期|重置|通知|更新)",
       url: "https://www.gstatic.com/generate_204",
       interval: 300,
-      tolerance: 50,
+      tolerance: 65535,
       lazy: true,
     },
     {
@@ -145,6 +146,17 @@ function loadBrowserState(): BrowserState {
       state.settings.templateVersion = 1;
       state.settings.mergeMode = "proxy-providers";
       state.draft = emptyDraft(state.settings);
+    }
+    if (state.draft?.templateId === "clash-mihomo") {
+      const global = state.draft.groups.find((group) => group.name === "GLOBAL");
+      if (global) {
+        global.groupType = "select";
+        global.members = [];
+      } else {
+        state.draft.groups.unshift({ name: "GLOBAL", groupType: "select", members: [] });
+      }
+      const auto = state.draft.groups.find((group) => group.name === "发达地区自动" && group.groupType === "url-test");
+      if (auto && (auto.tolerance == null || auto.tolerance === 50)) auto.tolerance = 65535;
     }
     return state as BrowserState;
   }
@@ -211,6 +223,9 @@ function renderMockContent(state: BrowserState) {
   const groupNames = new Set(state.draft.groups.map((group) => group.name));
   const builtins = new Set(["DIRECT", "REJECT", "REJECT-DROP", "PASS", "GLOBAL"]);
   const groupYaml = state.draft.groups.map((group) => {
+    if (group.name === "GLOBAL") {
+      return `  - name: "GLOBAL"\n    type: select\n    include-all: true\n    exclude-type: Direct`;
+    }
     if (state.settings.mergeMode === "proxy-providers") {
       const providerRefs = state.subscriptions.filter((item) => item.enabled).map((_, index) => `      - sub_${index + 1}`).join("\n");
       const members = group.members.filter((item) => groupNames.has(item) || builtins.has(item)).map((item) => `      - \"${item}\"`).join("\n");
@@ -219,7 +234,7 @@ function renderMockContent(state: BrowserState) {
     const members = group.members.map((item) => `      - \"${item}\"`).join("\n");
     return `  - name: \"${group.name}\"\n    type: ${group.groupType}\n    proxies:\n${members || "      - DIRECT"}`;
   }).join("\n");
-  return `mixed-port: 7890\nallow-lan: true\nmode: rule\n${state.settings.mergeMode === "proxy-providers" ? `proxy-providers:\n${providers || "  {}"}` : `proxies:\n${proxyNames || "  []"}`}\nproxy-groups:\n${groupYaml}\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,节点选择\n`;
+  return `mixed-port: 7890\nallow-lan: true\nmode: rule\nprofile:\n  store-selected: true\n${state.settings.mergeMode === "proxy-providers" ? `proxy-providers:\n${providers || "  {}"}` : `proxies:\n${proxyNames || "  []"}`}\nproxy-groups:\n${groupYaml}\nrules:\n  - GEOIP,CN,DIRECT\n  - MATCH,节点选择\n`;
 }
 
 async function mockInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -263,7 +278,7 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
         item.lastFetchedAt = now;
         item.lastTestedAt = now;
         item.lastSuccessAt = input.testResult.reachable ? now : item.lastSuccessAt;
-        item.proxyCount = input.testResult.proxyCount ?? 0;
+        item.proxyCount = input.testResult.availableProxyCount;
         item.elapsedMs = input.testResult.elapsedMs;
       }
       if (!existing) state.subscriptions.push(item);
@@ -280,13 +295,20 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
       const saved = state.subscriptions.find((subscription) => subscription.id === args?.id);
       const url = String(args?.url || saved?.url || "");
       const valid = /^https?:\/\//i.test(url);
+      const availableNodes = valid ? [
+        { index: 0, name: "日本-01", type: "vmess", elapsedMs: 86 },
+        { index: 1, name: "新加坡-02", type: "trojan", elapsedMs: 112 },
+        { index: 2, name: "美国-03", type: "ss", elapsedMs: 168 },
+      ] : [];
       return {
-        reachable: valid,
-        stage: valid ? "complete" : "url",
+        reachable: availableNodes.length > 0,
+        stage: availableNodes.length > 0 ? "complete" : "url",
         httpStatus: valid ? 200 : null,
         elapsedMs: 642,
         responseBytes: valid ? 18420 : null,
         proxyCount: valid ? 42 : null,
+        availableProxyCount: availableNodes.length,
+        availableNodes,
         proxyTypes: valid ? ["ss", "vmess", "trojan"] : [],
         warnings: [],
         error: valid ? null : "仅支持 http 或 https 订阅地址",
@@ -296,22 +318,29 @@ async function mockInvoke<T>(command: string, args?: Record<string, unknown>): P
       const item = state.subscriptions.find((subscription) => subscription.id === args?.id);
       if (!item) throw new Error("订阅不存在或已删除");
       const valid = /^https?:\/\//i.test(item.url);
+      const availableNodes = valid ? [
+        { index: 0, name: "日本-01", type: "vmess", elapsedMs: 86 },
+        { index: 1, name: "新加坡-02", type: "trojan", elapsedMs: 112 },
+        { index: 2, name: "美国-03", type: "ss", elapsedMs: 168 },
+      ] : [];
       const now = Date.now();
-      item.lastStatus = valid ? "success" : "error";
+      item.lastStatus = availableNodes.length > 0 ? "success" : "error";
       item.lastError = valid ? null : "仅支持 http 或 https 订阅地址";
       item.lastFetchedAt = now;
       item.lastTestedAt = now;
-      item.lastSuccessAt = valid ? now : item.lastSuccessAt;
-      item.proxyCount = valid ? 42 : 0;
+      item.lastSuccessAt = availableNodes.length > 0 ? now : item.lastSuccessAt;
+      item.proxyCount = availableNodes.length;
       item.elapsedMs = 642;
       saveBrowserState(state);
       return {
-        reachable: valid,
-        stage: valid ? "complete" : "url",
+        reachable: availableNodes.length > 0,
+        stage: availableNodes.length > 0 ? "complete" : "url",
         httpStatus: valid ? 200 : null,
         elapsedMs: 642,
         responseBytes: valid ? 18420 : null,
         proxyCount: valid ? 42 : null,
+        availableProxyCount: availableNodes.length,
+        availableNodes,
         proxyTypes: valid ? ["ss", "vmess", "trojan"] : [],
         warnings: [],
         error: valid ? null : "仅支持 http 或 https 订阅地址",

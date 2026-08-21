@@ -1,7 +1,7 @@
 use crate::error::{AppError, AppResult};
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::get,
     Router,
@@ -86,12 +86,24 @@ async fn serve_config(
     response_headers.insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
     response_headers.insert(
         header::CONTENT_DISPOSITION,
-        format!("inline; filename=\"{}\"", content.file_name)
-            .parse()
-            .unwrap(),
+        content_disposition(&content.file_name),
     );
     response_headers.insert(header::ETAG, etag.parse().unwrap());
     (StatusCode::OK, response_headers, content.body.clone())
+}
+
+fn content_disposition(file_name: &str) -> HeaderValue {
+    let safe_name = file_name
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || "._-".contains(*character))
+        .collect::<String>();
+    let safe_name = if safe_name.is_empty() {
+        "merge-clash.yaml"
+    } else {
+        safe_name.as_str()
+    };
+    HeaderValue::from_str(&format!("inline; filename={safe_name}"))
+        .unwrap_or_else(|_| HeaderValue::from_static("inline; filename=merge-clash.yaml"))
 }
 
 pub fn network_environment() -> NetworkEnvironment {
@@ -298,5 +310,23 @@ mod tests {
         assert!(is_proxy_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
         assert!(is_proxy_ipv4(Ipv4Addr::new(198, 19, 255, 254)));
         assert!(!is_proxy_ipv4(Ipv4Addr::new(192, 168, 1, 23)));
+    }
+
+    #[test]
+    fn content_disposition_has_no_quotes_or_backslashes() {
+        let header = content_disposition("merge-clash.yaml");
+        let value = header.to_str().unwrap();
+
+        assert_eq!(value, "inline; filename=merge-clash.yaml");
+        assert!(!value.contains('"'));
+        assert!(!value.contains('\\'));
+    }
+
+    #[test]
+    fn content_disposition_sanitizes_unsafe_file_names() {
+        let header = content_disposition("a\"\\b.yaml");
+        let value = header.to_str().unwrap();
+
+        assert_eq!(value, "inline; filename=ab.yaml");
     }
 }

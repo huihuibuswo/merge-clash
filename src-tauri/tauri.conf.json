@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "externalBin": ["bin/mihomo"],
     "icon": ["icons/icon.ico"]
   }
 }
